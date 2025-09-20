@@ -1,0 +1,91 @@
+version: "3.9"
+
+x-common-env: &common_env
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+services:
+  # === Postgres per service ===
+  pg_auth:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  pg_catalog:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: catalog_db
+      POSTGRES_USER: catalog_user
+      POSTGRES_PASSWORD: catalog_pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog_user -d catalog_db"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  pg_library:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: library_db
+      POSTGRES_USER: library_user
+      POSTGRES_PASSWORD: library_pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U library_user -d library_db"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  # === Auth Service ===
+  auth:
+    build: ./backend/auth
+    environment:
+      <<: *common_env
+      SERVICE_NAME: auth
+      DATABASE_URL: postgresql+psycopg://auth_user:auth_pass@pg_auth:5432/auth_db
+      JWT_SECRET: DEV_SECRET
+    depends_on:
+      pg_auth:
+        condition: service_healthy
+    ports: ["8003:8000"]
+    command: ["bash", "/app/start.sh"]
+
+  # === Catalog Service ===
+  catalog:
+    build: ./backend/catalog
+    environment:
+      <<: *common_env
+      SERVICE_NAME: catalog
+      DATABASE_URL: postgresql+psycopg://catalog_user:catalog_pass@pg_catalog:5432/catalog_db
+    depends_on:
+      pg_catalog:
+        condition: service_healthy
+    ports: ["8001:8000"]
+    command: ["bash", "/app/start.sh"]
+
+  # === Library Service ===
+  library:
+    build: ./backend/library
+    environment:
+      <<: *common_env
+      SERVICE_NAME: library
+      DATABASE_URL: postgresql+psycopg://library_user:library_pass@pg_library:5432/library_db
+    depends_on:
+      pg_library:
+        condition: service_healthy
+    ports: ["8002:8000"]
+    command: ["bash", "/app/start.sh"]
+
+  # === Integration/Sync Service (stub) ===
+  integration:
+    build: ./backend/integration
+    environment:
+      <<: *common_env
+      SERVICE_NAME: integration
+    ports: ["8004:8000"]
