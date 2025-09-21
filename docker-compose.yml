@@ -65,10 +65,11 @@ services:
       dockerfile: backend/catalog/Dockerfile
       args:
         SERVICE_DIR: backend/catalog
+    env_file: [.env]
     environment:
       <<: *common_env
       SERVICE_NAME: catalog
-      DATABASE_URL: postgresql+psycopg://catalog_user:catalog_pass@pg_catalog:5432/catalog_db
+      DATABASE_URL: ${CATALOG_DATABASE_URL}
     depends_on:
       pg_catalog:
         condition: service_healthy
