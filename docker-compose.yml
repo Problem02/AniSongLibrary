@@ -70,6 +70,7 @@ services:
       <<: *common_env
       SERVICE_NAME: catalog
       DATABASE_URL: ${CATALOG_DATABASE_URL}
+      ANISONGDB_BASE_URL: ${ANISONGDB_BASE_URL}
     depends_on:
       pg_catalog:
         condition: service_healthy
