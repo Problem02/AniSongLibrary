@@ -13,13 +13,6 @@ CreditRole = Literal["artist", "composer", "arranger"]
 
 # --- Briefs / Refs -----------------------------------------------------------
 
-class AnimeBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    title_en: Optional[str] = None
-    title_jp: Optional[str] = None
-    title_romaji: Optional[str] = None
-
 class PeopleBrief(BaseModel):
     """Minimal person reference; maps People.primary_name -> name."""
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -42,14 +35,18 @@ class SongCreditOut(BaseModel):
 class SongAnimeLinkIn(BaseModel):
     anime_id: UUID
     use_type: SongType
+    is_dub: bool
+    is_rebroadcast: bool
     sequence: Optional[int] = None
     notes: Optional[str] = None
 
 class SongAnimeLinkOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
-    anime: AnimeBrief
+    anime: Anime
     use_type: SongType
+    is_dub: bool
+    is_rebroadcast: bool
     sequence: Optional[int] = None
     notes: Optional[str] = None
 
@@ -58,16 +55,12 @@ class SongAnimeLinkOut(BaseModel):
 class SongCreate(BaseModel):
     name: str
     audio: str
-    is_dub: bool = False
-    is_rebroadcast: bool = False
     anime_links: List[SongAnimeLinkIn] = []
     credits: List[SongCreditIn] = []
 
 class SongUpdate(BaseModel):
     name: Optional[str] = None
     audio: Optional[str] = None
-    is_dub: Optional[bool] = None
-    is_rebroadcast: Optional[bool] = None
     # replace-all semantics when provided
     anime_links: Optional[List[SongAnimeLinkIn]] = None
     credits: Optional[List[SongCreditIn]] = None
@@ -78,8 +71,6 @@ class Song(BaseModel):
     id: UUID
     name: str
     audio: str
-    is_dub: bool
-    is_rebroadcast: bool
     anime_links: List[SongAnimeLinkOut]
     credits: List[SongCreditOut]
     created_at: datetime
@@ -109,3 +100,25 @@ class People(BaseModel):
     image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    
+# --- Anime update & per-anime song appearances --------------------------------
+
+class AnimeUpdate(BaseModel):
+    title_en: Optional[str] = None
+    title_jp: Optional[str] = None
+    title_romaji: Optional[str] = None
+    season: Optional[str] = None    # "Spring" | "Summer" | "Fall" | "Winter"
+    year: Optional[int] = None
+    type: Optional[str] = None      # TV | MOVIE | ONA | ...
+    cover_image_url: Optional[str] = None
+    linked_ids: Optional[dict] = None  # allow merging on PATCH
+
+class AnimeSongAppearance(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    link_id: UUID
+    song: Song
+    use_type: SongType
+    is_dub: bool
+    is_rebroadcast: bool
+    sequence: Optional[int] = None
+    notes: Optional[str] = None

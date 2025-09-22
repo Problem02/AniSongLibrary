@@ -147,17 +147,6 @@ class Song(Base):
         back_populates="song",
         cascade="all, delete-orphan"
     )
-
-    is_dub: Mapped[bool] = mapped_column(
-        sa.Boolean,
-        nullable=False,
-        server_default=sa.text("false")
-    )
-    is_rebroadcast: Mapped[bool] = mapped_column(
-        sa.Boolean,
-        nullable=False,
-        server_default=sa.text("false")
-    )
     
     audio: Mapped[str] = mapped_column(sa.Text, nullable=False)
     
@@ -219,6 +208,17 @@ class SongAnime(Base):
         ForeignKey("anime.id", ondelete="CASCADE"),
         nullable=False,
         index=True
+    )
+    
+    is_dub: Mapped[bool] = mapped_column(
+        sa.Boolean,
+        nullable=False,
+        server_default=sa.text("false")
+    )
+    is_rebroadcast: Mapped[bool] = mapped_column(
+        sa.Boolean,
+        nullable=False,
+        server_default=sa.text("false")
     )
 
     # Per-appearance attributes

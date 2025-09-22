@@ -1,9 +1,9 @@
 from __future__ import annotations
 import uuid
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import exists
 
 from app.db.session import SessionLocal
@@ -14,6 +14,7 @@ from app.services.anisong_importer import import_songs_for_anime
 
 router = APIRouter(prefix="/songs", tags=["songs"])
 
+# --- deps --------------------------------------------------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -24,16 +25,64 @@ def get_db():
     finally:
         db.close()
 
+
+# --- helpers -----------------------------------------------------------------   
+def _get_song_or_404(db: Session, song_id: uuid.UUID) -> m.Song:
+    row = (
+        db.query(m.Song)
+          .options(
+              selectinload(m.Song.anime_links).selectinload(m.SongAnime.anime),
+              selectinload(m.Song.credits).selectinload(m.SongArtist.people),
+          )
+          .filter(m.Song.id == song_id)
+          .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="song_not_found")
+    return row
+
 def _get_anime_or_404(db: Session, anime_id: uuid.UUID) -> m.Anime:
     row = db.query(m.Anime).filter(m.Anime.id == anime_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="anime_not_found")
     return row
 
-@router.get("/by-anime/{anime_id}", response_model=List[s.Song])
-async def get_songs_by_anime(anime_id: uuid.UUID,
-                             import_if_missing: bool = True,
-                             db: Session = Depends(get_db)):
+
+# --- routes: CRUD ------------------------------------------------------------
+@router.get("", response_model=List[s.Song], response_model_exclude_none=True)
+def list_songs(
+    db: Session = Depends(get_db),
+    q: Optional[str] = Query(None, description="case-insensitive search by song name"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(25, ge=1, le=100),
+):
+    query = (
+        db.query(m.Song)
+          .options(
+              selectinload(m.Song.anime_links).selectinload(m.SongAnime.anime),
+              selectinload(m.Song.credits).selectinload(m.SongArtist.people),
+          )
+          .order_by(m.Song.created_at.desc())
+    )
+    if q:
+        like = f"%{q}%"
+        query = query.filter(m.Song.name.ilike(like))
+    rows = query.offset(skip).limit(limit).all()
+    return rows
+
+
+@router.get("/{song_id:uuid}", response_model=s.Song, response_model_exclude_none=True)
+def get_song(song_id: uuid.UUID, db: Session = Depends(get_db)):
+    return _get_song_or_404(db, song_id)
+
+
+# --- routes: songs by anime --------------------------------
+@router.get("/by-anime/{anime_id:uuid}", response_model=List[s.Song], response_model_exclude_none=True)
+async def get_songs_by_anime(
+    anime_id: uuid.UUID,
+    import_if_missing: bool = True,
+    db: Session = Depends(get_db),
+):
     anime = _get_anime_or_404(db, anime_id)
 
     has_any = db.query(exists().where(m.SongAnime.anime_id == anime_id)).scalar()
@@ -42,17 +91,25 @@ async def get_songs_by_anime(anime_id: uuid.UUID,
             await import_songs_for_anime(db, anime)
         except AniSongDBNotConfigured:
             db.rollback()
-            raise HTTPException(status_code=502, detail={"error":"anisongdb_not_configured"})
+            raise HTTPException(status_code=502, detail={"error": "anisongdb_not_configured"})
         except Exception as e:
             db.rollback()
-            raise HTTPException(status_code=502, detail={"error":"anisongdb_import_failed","message":str(e)})
+            raise HTTPException(status_code=502, detail={"error": "anisongdb_import_failed", "message": str(e)})
 
-    # now the session is clean; this select won't hit InFailedSqlTransaction
+    # Eager-load nested pieces required by s.Song:
+    #   - song.anime_links (+ each link.anime)
+    #   - song.credits (+ each credit.people)
     songs = (
-        db.query(m.Song)
-          .join(m.SongAnime, m.SongAnime.song_id == m.Song.id)
-          .filter(m.SongAnime.anime_id == anime_id)
-          .order_by(m.Song.created_at.desc())
-          .all()
-    )
+    db.query(m.Song)
+      .join(m.SongAnime, m.SongAnime.song_id == m.Song.id)
+      .options(
+          selectinload(m.Song.anime_links).selectinload(m.SongAnime.anime),
+          selectinload(m.Song.credits).selectinload(m.SongArtist.people),
+      )
+      .filter(m.SongAnime.anime_id == anime_id)
+      .order_by(m.Song.created_at.desc())
+      .distinct()   # ← Checks for duplicates
+      .all()
+)
+
     return songs

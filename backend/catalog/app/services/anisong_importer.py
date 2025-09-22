@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -12,11 +13,13 @@ from app.clients.anisongdb import (
     explode_names_from_string,
 )
 
+
 def _first(*vals):
     for v in vals:
         if v:
             return v
     return None
+
 
 def _get_or_create_person(db: Session, name: str) -> m.People:
     row = db.query(m.People).filter(m.People.primary_name == name).first()
@@ -27,20 +30,18 @@ def _get_or_create_person(db: Session, name: str) -> m.People:
     db.flush()
     return row
 
-def _get_or_create_song(db: Session, name: str, *, audio: str, is_dub: bool | None, is_rebroadcast: bool | None) -> m.Song:
+
+def _get_or_create_song(db: Session, name: str, *, audio: str) -> m.Song:
     row = db.query(m.Song).filter(m.Song.name == name).first()
     if row:
         if audio and not row.audio:
             row.audio = audio
-        if is_dub is True and row.is_dub is not True:
-            row.is_dub = True
-        if is_rebroadcast is True and row.is_rebroadcast is not True:
-            row.is_rebroadcast = True
         return row
-    row = m.Song(name=name, audio=audio or "", is_dub=bool(is_dub), is_rebroadcast=bool(is_rebroadcast))
+    row = m.Song(name=name, audio=audio or "")
     db.add(row)
     db.flush()
     return row
+
 
 def _ensure_credit(db: Session, song_id, people_name: str, role: str) -> None:
     p = _get_or_create_person(db, people_name)
@@ -49,11 +50,50 @@ def _ensure_credit(db: Session, song_id, people_name: str, role: str) -> None:
     stmt = stmt.on_conflict_do_nothing(index_elements=["song_id", "people_id", "role"])
     db.execute(stmt)
 
-def _link_once(db: Session, song: m.Song, anime: m.Anime, use_type: str, sequence: int | None, notes: str | None) -> None:
-    stmt = pg_insert(m.SongAnime.__table__).values(
-        song_id=song.id, anime_id=anime.id, use_type=use_type, sequence=sequence, notes=notes
-    ).on_conflict_do_nothing(constraint="uq_song_anime_usage")
+
+def _link_once(
+    db: Session,
+    song: m.Song,
+    anime: m.Anime,
+    *,
+    use_type: str,
+    sequence: Optional[int],
+    notes: Optional[str],
+    is_dub: Optional[bool],
+    is_rebroadcast: Optional[bool],
+) -> None:
+    """
+    Insert or update a SongAnime link exactly once.
+
+    - On first insert: writes use_type, sequence, notes, is_dub, is_rebroadcast
+    - On conflict (same song/anime/use_type/sequence): keeps the first non-null notes,
+      and ORs the booleans so flags can only flip False->True (never True->False)
+    """
+    vals = {
+        "song_id": song.id,
+        "anime_id": anime.id,
+        "use_type": use_type,
+        "sequence": sequence,
+        "notes": notes,
+        "is_dub": bool(is_dub or False),
+        "is_rebroadcast": bool(is_rebroadcast or False),
+    }
+
+    stmt = pg_insert(m.SongAnime.__table__).values(vals)
+
+    # Use your unique constraint name for the link (adjust if yours differs)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_song_anime_usage",
+        set_={
+            # accumulate truth
+            "is_dub": sa.text("song_anime.is_dub OR EXCLUDED.is_dub"),
+            "is_rebroadcast": sa.text("song_anime.is_rebroadcast OR EXCLUDED.is_rebroadcast"),
+            # keep the first non-null notes
+            "notes": sa.text("COALESCE(song_anime.notes, EXCLUDED.notes)"),
+        },
+    )
     db.execute(stmt)
+
 
 def _row_matches_anime(row: Dict[str, Any], anime: m.Anime) -> bool:
     """Extra guard for title-based search: ensure the hit is really our show."""
@@ -81,6 +121,7 @@ def _row_matches_anime(row: Dict[str, Any], anime: m.Anime) -> bool:
     alt = row.get("animeAltName") or []
     names.update([n.lower() for n in alt if isinstance(n, str)])
     return bool(titles & names)
+
 
 async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
     """
@@ -116,7 +157,7 @@ async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
         use_type, sequence = parse_use_type_and_seq(song_type_raw)
         if use_type not in {"OP", "ED", "IN"}:
             continue
-        
+
         notes = f"imported from AniSongDB: {song_type_raw}" if song_type_raw else "imported from AniSongDB"
 
         key = (song_name, song_type_raw, r.get("annSongId"))
@@ -124,12 +165,12 @@ async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
             continue
         seen_pairs.add(key)
 
-        # core song fields
-        is_dub = r.get("isDub")
-        is_reb = r.get("isRebroadcast")
+        # link-scoped flags & core song fields
+        is_dub = r.get("isDub") or False
+        is_reb = r.get("isRebroadcast") or False
         audio = _first(r.get("audio"), r.get("HQ"), r.get("MQ")) or ""
 
-        song = _get_or_create_song(db, song_name, audio=audio, is_dub=is_dub, is_rebroadcast=is_reb)
+        song = _get_or_create_song(db, song_name, audio=audio)
 
         # credits (prefer arrays; fallback to the single strings)
         def name_from_artist_obj(a: Dict[str, Any]) -> Optional[str]:
@@ -154,7 +195,16 @@ async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
         for n in filter(None, arrangers):
             _ensure_credit(db, song.id, n, "arranger")
 
-        _link_once(db, song, anime, use_type=use_type, sequence=sequence, notes=notes)
+        _link_once(
+            db,
+            song,
+            anime,
+            use_type=use_type,
+            sequence=sequence,
+            notes=notes,
+            is_dub=is_dub,
+            is_rebroadcast=is_reb,
+        )
 
         if song not in out_songs:
             out_songs.append(song)
