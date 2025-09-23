@@ -14,12 +14,11 @@ down_revision = "0003"
 branch_labels = None
 depends_on = None
 
-
 def upgrade() -> None:
     conn = op.get_bind()
     insp = sa.inspect(conn)
 
-    # 1) Create enum only if it doesn't exist
+    # Ensure the enum exists (harmless if 0001 already created it)
     op.execute("""
     DO $$
     BEGIN
@@ -28,13 +27,9 @@ def upgrade() -> None:
       END IF;
     END$$;
     """)
-    
-    # 2) Build an enum *object* that does NOT create the type again
-    role_enum = postgresql.ENUM(
-        'artist','composer','arranger',
-        name='song_credit_role',
-        create_type=False  # <— important
-    )
+
+    # Reference existing enum (do not create again)
+    role_enum = postgresql.ENUM(name='song_credit_role', create_type=False)
 
     # people
     if not insp.has_table("people"):
@@ -42,9 +37,9 @@ def upgrade() -> None:
             "people",
             sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
             sa.Column("kind", sa.String(10), nullable=False),
-            sa.Column("primary_name", sa.Text, nullable=False),
-            sa.Column("alt_names", postgresql.ARRAY(sa.Text), nullable=False, server_default=sa.text("'{}'")),
-            sa.Column("image_url", sa.Text, nullable=True),
+            sa.Column("primary_name", sa.Text(), nullable=False),
+            sa.Column("alt_names", postgresql.ARRAY(sa.Text()), nullable=False, server_default=sa.text("'{}'")),
+            sa.Column("image_url", sa.Text(), nullable=True),
             sa.Column("external_links", postgresql.JSONB(astext_type=sa.Text()), nullable=False,
                       server_default=sa.text("'{}'::jsonb")),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -64,15 +59,16 @@ def upgrade() -> None:
         )
 
     # song_artist (use role_enum)
-    op.create_table(
-        "song_artist",
-        sa.Column("song_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("people_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("role", role_enum, nullable=False),
-        sa.ForeignKeyConstraint(["song_id"], ["song.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["people_id"], ["people.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("song_id", "people_id", "role"),
-    )
+    if not insp.has_table("song_artist"):
+        op.create_table(
+            "song_artist",
+            sa.Column("song_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("people_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("role", role_enum, nullable=False),
+            sa.ForeignKeyConstraint(["song_id"], ["song.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(["people_id"], ["people.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("song_id", "people_id", "role"),
+        )
 
 def downgrade() -> None:
     conn = op.get_bind()
@@ -83,4 +79,4 @@ def downgrade() -> None:
         op.drop_table("people_membership")
     if insp.has_table("people"):
         op.drop_table("people")
-    # keep the enum; other revisions may reference it
+    # keep enum in place for other revisions

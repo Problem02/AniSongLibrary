@@ -4,7 +4,7 @@ import httpx
 
 ANILIST_URL = "https://graphql.anilist.co"
 
-MEDIA_QUERY = """
+ANIME_QUERY = """
 query ($id: Int!) {
   Media(id: $id, type: ANIME) {
     id
@@ -21,7 +21,10 @@ query ($id: Int!) {
 
 async def fetch_anime_by_id(anilist_id: int) -> dict | None:
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(ANILIST_URL, json={"query": MEDIA_QUERY, "variables": {"id": anilist_id}})
+        r = await client.post(
+          ANILIST_URL, 
+          json={"query": ANIME_QUERY, "variables": {"id": anilist_id}}
+        )
         r.raise_for_status()
         data = r.json().get("data", {})
         return data.get("Media")

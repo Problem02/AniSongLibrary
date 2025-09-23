@@ -1,6 +1,6 @@
 from __future__ import annotations
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, selectinload
@@ -10,7 +10,7 @@ from app.db.session import SessionLocal
 from app.db import models as m
 from app.db import schemas as s
 from app.clients.anisongdb import AniSongDBNotConfigured
-from app.services.anisong_importer import import_songs_for_anime
+from app.services.anisong_importer import import_songs_for_anime, import_songs_for_person
 
 router = APIRouter(prefix="/songs", tags=["songs"])
 
@@ -46,6 +46,20 @@ def _get_anime_or_404(db: Session, anime_id: uuid.UUID) -> m.Anime:
     if not row:
         raise HTTPException(status_code=404, detail="anime_not_found")
     return row
+
+def _get_person_or_404(db: Session, person_id: uuid.UUID) -> m.People:
+    row = db.query(m.People).filter(m.People.id == person_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="people_not_found")
+    return row
+
+def _parse_roles(roles: Optional[str]) -> Set[str]:
+    allowed = {"artist", "composer", "arranger"}
+    if not roles:
+        return allowed
+    parts = {p.strip().lower() for p in roles.split(",")}
+    picked = allowed & parts
+    return picked or allowed
 
 
 # --- routes: CRUD ------------------------------------------------------------
@@ -110,6 +124,43 @@ async def get_songs_by_anime(
       .order_by(m.Song.created_at.desc())
       .distinct()   # ← Checks for duplicates
       .all()
-)
+    )
+    return songs
+
+
+# --- routes: songs by person --------------------------------
+@router.get("/by-person/{person_id:uuid}", response_model=List[s.Song], response_model_exclude_none=True)
+async def get_songs_by_person(
+    person_id: uuid.UUID,
+    roles: Optional[str] = Query(None, description="comma-separated: artist,composer,arranger"),
+    import_if_missing: bool = True,
+    db: Session = Depends(get_db),
+):
+    """
+    Return songs where this person is credited with any of the selected roles.
+    On empty result and import_if_missing=true, pull from AniSongDB using the person's
+    anisongdb_id (preferred) or name/alt-names, then re-query.
+    """
+    person = _get_person_or_404(db, person_id)
+    role_set = _parse_roles(roles)
+
+    def _query():
+        return (
+            db.query(m.Song)
+              .join(m.SongArtist, m.SongArtist.song_id == m.Song.id)
+              .options(
+                  selectinload(m.Song.anime_links).selectinload(m.SongAnime.anime),
+                  selectinload(m.Song.credits).selectinload(m.SongArtist.people),
+              )
+              .filter(m.SongArtist.people_id == person_id, m.SongArtist.role.in_(role_set))
+              .order_by(m.Song.created_at.desc())
+              .distinct()   # dedupe across multiple credits
+              .all()
+        )
+
+    songs = _query()
+    if not songs and import_if_missing:
+        await import_songs_for_person(db, person, roles=role_set)
+        songs = _query()
 
     return songs

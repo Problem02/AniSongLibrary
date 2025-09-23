@@ -2,14 +2,16 @@ import uuid
 from typing import Optional
 
 import sqlalchemy as sa
-from sqlalchemy import ForeignKey, Index, UniqueConstraint
+from sqlalchemy import UUID, ForeignKey, Index, UniqueConstraint, ARRAY
 from sqlalchemy.orm import declarative_base, relationship, Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()
 
-song_type = sa.Enum("OP", "ED", "IN", name="song_type")
-song_credit_role = sa.Enum("artist", "composer", "arranger", name="song_credit_role")
+# Reference existing pg enums created by Alembic; do NOT auto-create types here
+song_type = postgresql.ENUM("OP", "ED", "IN", name="song_type", create_type=False)
+song_credit_role = postgresql.ENUM("artist", "composer", "arranger", name="song_credit_role", create_type=False)
 
 class Anime(Base):
     __tablename__ = "anime"
@@ -75,6 +77,10 @@ class People(Base):
         default=list,
         server_default=sa.text("'{}'"),
         nullable=False,
+    )
+    
+    anisongdb_id: Mapped[int | None] = mapped_column(
+        sa.Integer, unique=True, index=True, nullable=True
     )
     
     image_url: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)

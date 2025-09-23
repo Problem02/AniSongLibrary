@@ -16,9 +16,8 @@ down_revision = '0001_init'
 branch_labels = None
 depends_on = None
 
-
-# Reuse existing enum in DB
-song_type = sa.Enum("OP", "ED", "IN", name="song_type")
+# Reference the existing enum; do NOT recreate it here
+song_type = postgresql.ENUM(name="song_type", create_type=False)
 
 def _drop_child_fks(conn, parent_table: str):
     # Drop all foreign keys that reference parent_table (e.g., "song" or "anime")
@@ -62,7 +61,7 @@ def upgrade():
                   sa.ForeignKey("song.id", ondelete="CASCADE"), nullable=False),
         sa.Column("anime_id", postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("anime.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("use_type", sa.Enum("OP", "ED", "IN", name="song_type"), nullable=False),
+        sa.Column("use_type", song_type, nullable=False),
         sa.Column("sequence", sa.Integer(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.UniqueConstraint("song_id", "anime_id", "use_type", "sequence", name="uq_song_anime_usage"),
@@ -72,8 +71,6 @@ def upgrade():
     op.create_index("ix_song_anime_anime_song", "song_anime", ["anime_id", "song_id"])
 
     # 3) Backfill from legacy columns (song.anime_id + song.type) BEFORE dropping them
-    #    Works even if those two columns are VARCHAR by casting ::uuid.
-    #    If your ids aren’t valid UUID strings, this will fail — fix the data first.
     insp = sa.inspect(conn)
     song_cols = {c["name"] for c in insp.get_columns("song")}
     if "anime_id" in song_cols and "type" in song_cols:
@@ -107,7 +104,7 @@ def upgrade():
 def downgrade():
     # Recreate columns on song (nullable to avoid data loss on multi-links)
     with op.batch_alter_table("song") as batch:
-        batch.add_column(sa.Column("anime_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True))
+        batch.add_column(sa.Column("anime_id", postgresql.UUID(as_uuid=True), nullable=True))
         batch.add_column(sa.Column("type", song_type, nullable=True))
         batch.create_foreign_key("fk_song_anime_id_anime", "anime", ["anime_id"], ["id"], ondelete="CASCADE")
 

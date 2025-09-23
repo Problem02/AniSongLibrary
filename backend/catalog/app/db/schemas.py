@@ -11,13 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field
 SongType = Literal["OP", "ED", "IN"]
 CreditRole = Literal["artist", "composer", "arranger"]
 
+
 # --- Briefs / Refs -----------------------------------------------------------
 
 class PeopleBrief(BaseModel):
-    """Minimal person reference; maps People.primary_name -> name."""
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)
     id: UUID
-    name: str = Field(alias="primary_name")
+    primary_name: str
+    image_url: Optional[str] = None
+    kind: Literal["person", "group"]
+
 
 # --- Credits -----------------------------------------------------------------
 
@@ -29,6 +32,7 @@ class SongCreditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     role: CreditRole
     people: PeopleBrief  # comes from SongArtist.people relationship
+
 
 # --- Song<->Anime link (association object) ----------------------------------
 
@@ -49,6 +53,7 @@ class SongAnimeLinkOut(BaseModel):
     is_rebroadcast: bool
     sequence: Optional[int] = None
     notes: Optional[str] = None
+
 
 # --- Song schemas ------------------------------------------------------------
 
@@ -76,7 +81,35 @@ class Song(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-# --- Anime & People read schemas --------------------------------------------
+
+# --- People schemas --------------------------------------------
+
+class People(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    anisongdb_id: Optional[int] = None
+    kind: Literal["person", "group"]
+    primary_name: str
+    alt_names: List[str] = []
+    image_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+class PeopleUpdate(BaseModel):
+    # all optional so PATCH can be partial
+    primary_name: Optional[str] = None
+    alt_names: Optional[List[str]] = None
+    image_url: Optional[str] = None
+    kind: Optional[Literal["person", "group"]] = None
+    anisongdb_id: Optional[int] = None
+    
+class PeopleDetail(People):
+    # richer view that includes memberships
+    members: List[PeopleBrief] = []
+    member_of: List[PeopleBrief] = []
+
+    
+# --- Anime schemas --------------------------------
 
 class Anime(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -90,18 +123,6 @@ class Anime(BaseModel):
     cover_image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-
-class People(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: UUID
-    kind: Literal["person", "group"]
-    primary_name: str
-    alt_names: List[str] = []
-    image_url: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-    
-# --- Anime update & per-anime song appearances --------------------------------
 
 class AnimeUpdate(BaseModel):
     title_en: Optional[str] = None

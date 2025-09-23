@@ -7,11 +7,21 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+# ---- ENUM definitions ----
+# Objects used to CREATE/DROP the underlying PG enum types:
+song_type_create = postgresql.ENUM("OP", "ED", "IN", name="song_type")
+song_credit_role_create = postgresql.ENUM("artist", "composer", "arranger", name="song_credit_role")
+
+# Reference-only enums used on columns (never attempt to CREATE):
+song_type = postgresql.ENUM(name="song_type", create_type=False)
+song_credit_role = postgresql.ENUM(name="song_credit_role", create_type=False)
 
 def upgrade():
-    # --- Enums ---
-    op.execute("CREATE TYPE song_type AS ENUM ('OP','ED','IN')")
-    op.execute("CREATE TYPE song_credit_role AS ENUM ('artist','composer','arranger')")
+    bind = op.get_bind()
+
+    # Create enum types once (no-op if they already exist)
+    song_type_create.create(bind, checkfirst=True)
+    song_credit_role_create.create(bind, checkfirst=True)
 
     # --- anime ---
     op.create_table(
@@ -45,7 +55,7 @@ def upgrade():
         sa.CheckConstraint("kind in ('person','group')", name="ck_people_kind"),
     )
 
-    # --- people_membership (self-join helper for groups) ---
+    # --- people_membership ---
     op.create_table(
         "people_membership",
         sa.Column("group_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("people.id", ondelete="CASCADE"), primary_key=True),
@@ -60,7 +70,7 @@ def upgrade():
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("anime_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("anime.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
-        sa.Column("type", sa.Enum(name="song_type", create_type=False), nullable=False),
+        sa.Column("type", song_type, nullable=False),  # reference-only enum
         sa.Column("is_dub", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_rebroadcast", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("audio", sa.Text(), nullable=False),
@@ -70,19 +80,17 @@ def upgrade():
     op.create_index("ix_song_anime_type", "song", ["anime_id", "type"])
     op.create_index("ix_song_updated_at", "song", ["updated_at"])
 
-    # --- song_artist (association with role) ---
+    # --- song_artist ---
     op.create_table(
         "song_artist",
         sa.Column("song_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("song.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("people_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("people.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("role", sa.Enum(name="song_credit_role", create_type=False), primary_key=True),
+        sa.Column("role", song_credit_role, primary_key=True),  # reference-only enum
     )
     op.create_index("ix_song_artist_people_role", "song_artist", ["people_id", "role"])
     op.create_index("ix_song_artist_song_role", "song_artist", ["song_id", "role"])
 
-
 def downgrade():
-    # drop in reverse order of dependencies / indexes first
     op.drop_index("ix_song_artist_song_role", table_name="song_artist")
     op.drop_index("ix_song_artist_people_role", table_name="song_artist")
     op.drop_table("song_artist")
@@ -96,9 +104,8 @@ def downgrade():
     op.drop_table("people_membership")
 
     op.drop_table("people")
-
     op.drop_table("anime")
 
-    # finally drop enum types
-    op.execute("DROP TYPE song_credit_role")
-    op.execute("DROP TYPE song_type")
+    bind = op.get_bind()
+    song_credit_role_create.drop(bind, checkfirst=True)
+    song_type_create.drop(bind, checkfirst=True)
