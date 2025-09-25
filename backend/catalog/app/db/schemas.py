@@ -74,6 +74,7 @@ class Song(BaseModel):
     """Read schema (response)"""
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    amq_song_id: int | None = None
     name: str
     audio: str
     anime_links: List[SongAnimeLinkOut]

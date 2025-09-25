@@ -202,3 +202,23 @@ async def search_songs_for_person(name: str, roles: Set[str], *, size: int = 100
         r = await client.post(f"{ANISONGDB_BASE}/search_request", json=payload)
         r.raise_for_status()
         return r.json() or []
+    
+
+async def fetch_by_amq_song_ids(amq_song_ids: List[int]) -> List[Dict[str, Any]]:
+    """
+    POST /api/amq_song_ids_request with body: {"amq_song_ids":[...]}
+    Returns a list[SongEntry].
+    """
+    base = _require_base()
+    if not amq_song_ids:
+        return []
+    payload: Dict[str, Any] = {
+        # reuse your broad filters so we get OP/ED/IN variants, dub/rebroadcast, etc.
+        **ARTIST_FILTERS,
+        "amq_song_ids": [int(x) for x in amq_song_ids],
+    }
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        r = await client.post(f"{base}/amq_song_ids_request", json=payload)
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else []

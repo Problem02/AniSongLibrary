@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 import sqlalchemy as sa
 from sqlalchemy import cast, Integer
@@ -14,7 +15,8 @@ from app.clients.anisongdb import (
     explode_names_from_string,
     fetch_songs_by_artist_ids,
     fetch_songs_by_composer_ids,
-    search_songs_for_person
+    search_songs_for_person,
+    fetch_by_amq_song_ids
 )
 
 
@@ -180,13 +182,34 @@ def _get_or_create_person(
     return row
 
 
-def _get_or_create_song(db: Session, name: str, *, audio: str) -> m.Song:
+def _get_or_create_song(
+    db: Session,
+    name: str,
+    *,
+    audio: str,
+    amq_song_id: Optional[int] = None,
+) -> m.Song:
+    # 1) Prefer lookup by amq_song_id if provided
+    if amq_song_id is not None:
+        row = db.query(m.Song).filter(m.Song.amq_song_id == amq_song_id).first()
+        if row:
+            if audio and not row.audio:
+                row.audio = audio
+            if name and not row.name:
+                row.name = name
+            return row
+
+    # 2) Fallback: lookup by exact name
     row = db.query(m.Song).filter(m.Song.name == name).first()
     if row:
+        if amq_song_id is not None and row.amq_song_id is None:
+            row.amq_song_id = amq_song_id
         if audio and not row.audio:
             row.audio = audio
         return row
-    row = m.Song(name=name, audio=audio or "")
+
+    # 3) Create new
+    row = m.Song(name=name, audio=audio or "", amq_song_id=amq_song_id)
     db.add(row)
     db.flush()
     return row
@@ -372,7 +395,7 @@ async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
     if not results:
         return []
 
-    seen_pairs = set()  # (songName, songType, annSongId) to dedupe
+    seen_pairs = set()  # (songName, songType, amqSongId) to dedupe
     out_songs: List[m.Song] = []
 
     for r in results:
@@ -397,7 +420,8 @@ async def import_songs_for_anime(db: Session, anime: m.Anime) -> List[m.Song]:
         is_reb = r.get("isRebroadcast") or False
         audio = _first(r.get("audio"), r.get("HQ"), r.get("MQ")) or ""
 
-        song = _get_or_create_song(db, song_name, audio=audio)
+        amq_song_id = _to_int(r.get("amqSongId"))
+        song = _get_or_create_song(db, song_name, audio=audio, amq_song_id=amq_song_id)
 
         # credits (prefer arrays; fallback to the single strings)
 
@@ -540,7 +564,8 @@ async def upsert_person_from_anisongdb_deep(
         audio = (r.get("audio") or r.get("HQ") or r.get("MQ") or "")  # prefer HQ/MQ fallback
         notes = f"imported from AniSongDB: {song_type_raw}"
 
-        song = _get_or_create_song(db, song_name, audio=audio)
+        amq_song_id = _to_int(r.get("amqSongId"))
+        song = _get_or_create_song(db, song_name, audio=audio, amq_song_id=amq_song_id)
         anime = _get_or_create_anime_from_row(db, r)
 
         _link_once(
@@ -655,7 +680,8 @@ async def import_songs_for_person(
         audio = r.get("audio") or r.get("HQ") or r.get("MQ") or ""
         notes = f"imported from AniSongDB: {raw}"
 
-        song = _get_or_create_song(db, song_name, audio=audio)
+        amq_song_id = _to_int(r.get("amqSongId"))
+        song = _get_or_create_song(db, song_name, audio=audio, amq_song_id=amq_song_id)
         anime = _get_or_create_anime_from_row(db, r)
 
         _link_once(
@@ -700,3 +726,88 @@ async def import_songs_for_person(
     for s in out_songs:
         db.refresh(s)
     return out_songs
+
+
+async def import_song_and_anime_by_amq_song_id(
+    db: Session,
+    amq_song_id: int,
+) -> tuple[m.Song | None, list[m.Anime]]:
+    """
+    Given an AMQ song id:
+      - Fetch song rows from AniSongDB
+      - Ensure the Song exists locally (create if missing, set name/audio; set amq_song_id if column exists)
+      - Upsert the Anime(s) and link the Song -> Anime appearances (OP/ED/IN, sequence, dub/rebroadcast, notes)
+      - Upsert artist/composer/arranger credits from row objects when available
+    Returns (Song, [distinct Anime...]).
+    """
+    rows = await fetch_by_amq_song_ids([int(amq_song_id)])
+    if not rows:
+        return None, []
+
+    # Pick a canonical row for the song's core fields
+    row0 = next((r for r in rows if r.get("songName")), rows[0])
+    song_name = _first(row0.get("songName"), row0.get("name")) or f"Song {amq_song_id}"
+    audio = _first(row0.get("audio"), row0.get("HQ"), row0.get("MQ")) or ""
+
+    # Try to find an existing local song by amq_song_id if your model has it
+    song: m.Song | None = None
+    if hasattr(m.Song, "amq_song_id"):
+        song = db.query(m.Song).filter(m.Song.__table__.c.amq_song_id == int(amq_song_id)).first()
+
+    # Create (or fetch by name) if still missing
+    if not song:
+        song = _get_or_create_song(db, song_name, audio=audio)
+        # backfill amq_song_id if the column exists
+        if hasattr(song, "amq_song_id") and getattr(song, "amq_song_id", None) is None:
+            try:
+                song.amq_song_id = int(amq_song_id)
+            except Exception:
+                pass
+
+    seen_anime_ids: set[uuid.UUID] = set()
+    out_anime: list[m.Anime] = []
+
+    for r in rows:
+        raw = r.get("songType")
+        use_type, sequence = parse_use_type_and_seq(raw)
+        if use_type not in {"OP", "ED", "IN"}:
+            continue
+
+        # Upsert the Anime for this row
+        anime = _get_or_create_anime_from_row(db, r)
+        if anime.id not in seen_anime_ids:
+            seen_anime_ids.add(anime.id)
+            out_anime.append(anime)
+
+        # Link (once) with per-appearance flags
+        is_dub = bool(r.get("isDub"))
+        is_rebroadcast = bool(r.get("isRebroadcast"))
+        notes = f"imported from AniSongDB: {raw}" if raw else "imported from AniSongDB"
+
+        _link_once(
+            db,
+            song,
+            anime,
+            use_type=use_type,
+            sequence=sequence,
+            notes=notes,
+            is_dub=is_dub,
+            is_rebroadcast=is_rebroadcast,
+        )
+
+        # Credits via object lists if present (mirrors your other importers)
+        for a in (r.get("artists") or []):
+            p = _upsert_artist_entity(db, a)
+            _ensure_credit_by_id(db, song.id, p.id, "artist")
+        for a in (r.get("composers") or []):
+            p = _upsert_artist_entity(db, a)
+            _ensure_credit_by_id(db, song.id, p.id, "composer")
+        for a in (r.get("arrangers") or []):
+            p = _upsert_artist_entity(db, a)
+            _ensure_credit_by_id(db, song.id, p.id, "arranger")
+
+    db.commit()
+    db.refresh(song)
+    for a in out_anime:
+        db.refresh(a)
+    return song, out_anime
