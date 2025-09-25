@@ -145,6 +145,10 @@ class Song(Base):
         primary_key=True,
         default=uuid.uuid4
     )
+    
+    amq_song_id: Mapped[int | None] = mapped_column(
+        sa.Integer, unique=True, index=True, nullable=True
+    )
 
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
 

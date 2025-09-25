@@ -12,6 +12,8 @@ from app.db.session import SessionLocal
 from app.db import models as m
 from app.db import schemas as s
 from app.clients.anilist import fetch_anime_by_id
+from app.services.anisong_importer import import_song_and_anime_by_amq_song_id
+from app.clients.anisongdb import AniSongDBNotConfigured
 
 router = APIRouter(prefix="/anime", tags=["anime"])
 
@@ -211,3 +213,30 @@ def list_anime_songs(anime_id: uuid.UUID, db: Session = Depends(get_db)):
             )
         )
     return out
+
+
+@router.post("/import/by-amq-song/{amq_song_id:int}",
+    response_model=list[s.Anime],
+    response_model_exclude_none=True,
+)
+async def import_anime_by_amq_song(amq_song_id: int, db: Session = Depends(get_db)):
+    """
+    Given an AMQ song id:
+      - Create the Song if it doesn't exist (and set amq_song_id if your model has it)
+      - Upsert the Anime entries the song appears in
+      - Link them (populating song.anime_links)
+    Returns the distinct list of Anime rows touched.
+    """
+    try:
+        song, animes = await import_song_and_anime_by_amq_song_id(db, amq_song_id)
+    except AniSongDBNotConfigured:
+        db.rollback()
+        raise HTTPException(status_code=502, detail={"error": "anisongdb_not_configured"})
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=502, detail={"error": "anisongdb_import_failed", "message": str(e)})
+
+    if not song:
+        raise HTTPException(status_code=404, detail="amq_song_not_found")
+
+    return animes
