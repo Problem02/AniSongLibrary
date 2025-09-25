@@ -56,6 +56,15 @@ services:
       SERVICE_NAME: account
       DATABASE_URL: ${ACCOUNT_DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      JWT_TTL_MINUTES: ${JWT_TTL_MINUTES}
+      # Dev-only seeding
+      ENV: ${ENV}
+      ENABLE_ADMIN_SEED: ${ENABLE_ADMIN_SEED}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME}
     depends_on:
       pg_account:
         condition: service_healthy
