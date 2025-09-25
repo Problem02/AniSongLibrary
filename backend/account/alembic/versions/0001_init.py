@@ -1,37 +1,39 @@
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
+# revision identifiers, used by Alembic.
 revision = "0001_init"
 down_revision = None
 branch_labels = None
 depends_on = None
 
 def upgrade():
+    # 1) Extensions (safe if already present)
+    op.execute("CREATE EXTENSION IF NOT EXISTS citext;")
+
+    # 2) Enum type (model uses create_type=False)
+    op.execute("CREATE TYPE user_role AS ENUM ('ADMIN', 'USER');")
+
+    # 3) users table
     op.create_table(
         "users",
-        sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("email", sa.String(), nullable=False, unique=True),
-        sa.Column("password_hash", sa.String(), nullable=False),
-        sa.Column("display_name", sa.String(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
-    )
-    op.create_table(
-        "user_preferences",
-        sa.Column("user_id", sa.String(), primary_key=True),
-        sa.Column("theme", sa.String(), nullable=True),
-        sa.Column("time_format", sa.String(), nullable=True),
-    )
-    op.create_table(
-        "external_links",
-        sa.Column("user_id", sa.String(), primary_key=True),
-        sa.Column("provider", sa.String(), primary_key=True),
-        sa.Column("provider_user_id", sa.String(), nullable=False),
-        sa.Column("access_token", sa.String(), nullable=True),
-        sa.Column("refresh_token", sa.String(), nullable=True),
-        sa.Column("expires_at", sa.String(), nullable=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column("role", postgresql.ENUM(name="user_role", create_type=False), nullable=False, server_default="USER"),
+        sa.Column("email", postgresql.CITEXT(), nullable=False, unique=True),
+        sa.Column("password_hash", sa.Text(), nullable=False),
+        sa.Column("display_name", sa.String(length=80), nullable=False, server_default=""),
+        sa.Column("avatar_url", sa.String(length=512), nullable=True),
+        sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
     )
 
+    # Index for searching by recent users
+    op.create_index("ix_users_created_at", "users", ["created_at"], unique=False)
+
 def downgrade():
-    op.drop_table("external_links")
-    op.drop_table("user_preferences")
+    op.drop_index("ix_users_created_at", table_name="users")
     op.drop_table("users")
+    op.execute("DROP TYPE IF EXISTS user_role;")
+    # (leave citext installed)
