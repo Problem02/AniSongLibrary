@@ -4,24 +4,26 @@ x-common-env: &common_env
 
 services:
   # === Postgres per service ===
-  pg_auth:
+  pg_account:
     image: postgres:16-alpine
+    env_file: [.env]
     environment:
-      POSTGRES_DB: auth_db
-      POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: auth_pass
+      POSTGRES_DB: ${ACCOUNT_DB}
+      POSTGRES_USER: ${ACCOUNT_USER}
+      POSTGRES_PASSWORD: ${ACCOUNT_PASS}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      test: ["CMD-SHELL", "pg_isready -U account_user -d account_db"]
       interval: 2s
       timeout: 2s
       retries: 20
 
   pg_catalog:
     image: postgres:16-alpine
+    env_file: [.env]
     environment:
-      POSTGRES_DB: catalog_db
-      POSTGRES_USER: catalog_user
-      POSTGRES_PASSWORD: catalog_pass
+      POSTGRES_DB: ${CATALOG_DB}
+      POSTGRES_USER: ${CATALOG_USER}
+      POSTGRES_PASSWORD: ${CATALOG_PASS}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U catalog_user -d catalog_db"]
       interval: 2s
@@ -30,6 +32,7 @@ services:
 
   pg_library:
     image: postgres:16-alpine
+    env_file: [.env]
     environment:
       POSTGRES_DB: library_db
       POSTGRES_USER: library_user
@@ -40,20 +43,30 @@ services:
       timeout: 2s
       retries: 20
 
-  # === Auth Service ===
-  auth:
+  # === Account Service ===
+  account:
     build: 
       context: .
-      dockerfile: backend/auth/Dockerfile
+      dockerfile: backend/account/Dockerfile
       args:
-        SERVICE_DIR: backend/auth
+        SERVICE_DIR: backend/account
+    env_file: [.env]
     environment:
       <<: *common_env
-      SERVICE_NAME: auth
-      DATABASE_URL: postgresql+psycopg://auth_user:auth_pass@pg_auth:5432/auth_db
-      JWT_SECRET: DEV_SECRET
+      SERVICE_NAME: account
+      DATABASE_URL: ${ACCOUNT_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      JWT_TTL_MINUTES: ${JWT_TTL_MINUTES}
+      # Dev-only seeding
+      ENV: ${ENV}
+      ENABLE_ADMIN_SEED: ${ENABLE_ADMIN_SEED}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME}
     depends_on:
-      pg_auth:
+      pg_account:
         condition: service_healthy
     ports: ["8003:8000"]
     command: ["bash", "/app/start.sh"]
@@ -65,15 +78,18 @@ services:
       dockerfile: backend/catalog/Dockerfile
       args:
         SERVICE_DIR: backend/catalog
+    env_file: [.env]
     environment:
       <<: *common_env
       SERVICE_NAME: catalog
-      DATABASE_URL: postgresql+psycopg://catalog_user:catalog_pass@pg_catalog:5432/catalog_db
+      DATABASE_URL: ${CATALOG_DATABASE_URL}
+      ANISONGDB_BASE_URL: ${ANISONGDB_BASE_URL}
     depends_on:
       pg_catalog:
         condition: service_healthy
     ports: ["8001:8000"]
     command: ["bash", "/app/start.sh"]
+
 
   # === Library Service ===
   library:
@@ -82,6 +98,7 @@ services:
       dockerfile: backend/library/Dockerfile
       args:
         SERVICE_DIR: backend/library
+    env_file: [.env]
     environment:
       <<: *common_env
       SERVICE_NAME: library
@@ -99,6 +116,7 @@ services:
       dockerfile: backend/integration/Dockerfile
       args:
         SERVICE_DIR: backend/integration
+    env_file: [.env]
     environment:
       <<: *common_env
       SERVICE_NAME: integration
