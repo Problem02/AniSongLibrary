@@ -34,9 +34,9 @@ services:
     image: postgres:16-alpine
     env_file: [.env]
     environment:
-      POSTGRES_DB: library_db
-      POSTGRES_USER: library_user
-      POSTGRES_PASSWORD: library_pass
+      POSTGRES_DB: ${LIBRARY_DB}
+      POSTGRES_USER: ${LIBRARY_USER}
+      POSTGRES_PASSWORD: ${LIBRARY_PASS}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U library_user -d library_db"]
       interval: 2s
@@ -102,23 +102,9 @@ services:
     environment:
       <<: *common_env
       SERVICE_NAME: library
-      DATABASE_URL: postgresql+psycopg://library_user:library_pass@pg_library:5432/library_db
+      DATABASE_URL: ${LIBRARY_DATABASE_URL}
     depends_on:
       pg_library:
         condition: service_healthy
     ports: ["8002:8000"]
-    command: ["bash", "/app/start.sh"]
-
-  # === Integration/Sync Service (stub) ===
-  integration:
-    build: 
-      context: .
-      dockerfile: backend/integration/Dockerfile
-      args:
-        SERVICE_DIR: backend/integration
-    env_file: [.env]
-    environment:
-      <<: *common_env
-      SERVICE_NAME: integration
-    ports: ["8004:8000"]
     command: ["bash", "/app/start.sh"]
