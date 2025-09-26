@@ -3,37 +3,26 @@ import sqlalchemy as sa
 
 revision = "0001_init"
 down_revision = None
-branch_labels = None
-depends_on = None
 
 def upgrade():
     op.create_table(
-        "library_entries",
-        sa.Column("user_id", sa.String(), primary_key=True),
-        sa.Column("entity_type", sa.String(), primary_key=True),
-        sa.Column("entity_id", sa.String(), primary_key=True),
-        sa.Column("added_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
+        "library_entry",
+        sa.Column("user_id", sa.Uuid(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column("song_id", sa.Uuid(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column("amq_song_id", sa.Integer(), nullable=True),
+        sa.Column("score", sa.SmallInteger(), nullable=False),
+        sa.Column("is_favorite", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("note", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("score BETWEEN 0 AND 100", name="ck_library_entry_score"),
     )
-    op.create_table(
-        "ratings",
-        sa.Column("user_id", sa.String(), primary_key=True),
-        sa.Column("song_id", sa.String(), primary_key=True),
-        sa.Column("score", sa.Integer(), nullable=False),
-        sa.Column("note", sa.String(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
-    )
-    op.create_table(
-        "rating_aggregates",
-        sa.Column("anime_id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), primary_key=True),
-        sa.Column("rated_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("total_songs", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("avg_score", sa.Integer(), nullable=True),
-        sa.Column("fully_rated", sa.Boolean(), nullable=False, server_default=sa.text("FALSE")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
-    )
+    op.create_index("ix_library_user_updated", "library_entry", ["user_id"], postgresql_using=None)
+    op.create_index("ix_library_user_score", "library_entry", ["user_id", "score"], postgresql_using=None)
+    op.create_index("ix_library_amq", "library_entry", ["amq_song_id"], postgresql_using=None)
 
 def downgrade():
-    op.drop_table("rating_aggregates")
-    op.drop_table("ratings")
-    op.drop_table("library_entries")
+    op.drop_index("ix_library_amq", table_name="library_entry")
+    op.drop_index("ix_library_user_score", table_name="library_entry")
+    op.drop_index("ix_library_user_updated", table_name="library_entry")
+    op.drop_table("library_entry")

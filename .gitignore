@@ -1,1 +1,7 @@
 .env
+.amq_scrape_state.json
+libraryMasterList.json
+.sync_state.json
+backend/catalog/logs/
+frontend/node_modules/
+anisonglibrary.openapi.yaml
