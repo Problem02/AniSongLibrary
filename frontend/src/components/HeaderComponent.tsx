@@ -83,7 +83,7 @@ export default function Header({
     try {
       await logout()
     } finally {
-      navigate("/login", { replace: true })
+      navigate("/", { replace: true })
     }
   }
 
@@ -110,7 +110,7 @@ export default function Header({
           {rightSlot ? (
             rightSlot
           ) : user ? (
-            // Logged-in: bigger avatar + dropdown
+            // Logged-in: dropdown
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button

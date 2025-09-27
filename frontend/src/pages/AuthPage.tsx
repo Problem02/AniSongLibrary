@@ -203,7 +203,6 @@ export function RegisterPage() {
   )
 }
 
-// Optional: a simple protected route helper you can use in your router
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   if (!user) {

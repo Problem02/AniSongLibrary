@@ -1,7 +1,7 @@
 import React, { useEffect, createContext, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { Button } from "@/ui/button"
 import { Slider } from "@/ui/slider"
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Music2 } from "lucide-react"
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Music2, ChevronUp } from "lucide-react"
 import SongInfoPanel from "@/components/SongInfoPanel"
 
 export type Track = {
@@ -152,7 +152,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 // --- UI ---
 export function PlayerBar() {
   const { current, isPlaying, toggle, next, prev, progress, duration, volume, setVolume, seek } = usePlayer()
-  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(true)
 
   React.useEffect(() => {
     // close panel on track change
@@ -170,29 +170,46 @@ export function PlayerBar() {
     <>
   <footer
   role="contentinfo"
-  className="sticky bottom-0 z-[80] w-screen border-t bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60
-             mx-[calc(50%-50vw)]"
+  className="sticky bottom-0 z-[1000] w-screen mx-[calc(50%-50vw)] border-t
+             bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 p-0 m-0"
   >
   {/* Full-bleed bar; no max-width container */}
   <div className="flex w-full items-center gap-4 py-2 px-4 sm:px-5">
-    {/* Left: song meta (click to open panel) */}
+    {/* Left: song meta (click to toggle panel) */}
     <button
-      className="flex min-w-0 flex-1 items-center gap-3 text-left"
-      onClick={() => setPanelOpen(true)}
+      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      onClick={() => setPanelOpen((v) => !v)}
       aria-haspopup="dialog"
       aria-expanded={panelOpen}
-      title="Show song details"
+      title={panelOpen ? "Hide song details" : "Show song details"}
     >
-      <div className="hidden sm:block text-muted-foreground">
-        <Music2 className="h-5 w-5" aria-hidden />
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium">{current?.title ?? "No track selected"}</div>
-        <div className="truncate text-xs text-muted-foreground">
+      {/* Up arrow that animates toward the panel when opening */}
+      <span
+        className={[
+          "inline-flex items-center justify-center",
+          "transition-transform transition-opacity duration-300",
+          panelOpen ? "-translate-y-1 opacity-0" : "translate-y-0 opacity-100",
+        ].join(" ")}
+        aria-hidden
+      >
+        <ChevronUp className="h-4 w-4 text-muted-foreground" />
+      </span>
+
+      {/* Small note glyph (kept) */}
+      <span className="hidden sm:inline text-muted-foreground" aria-hidden>
+        <Music2 className="h-5 w-5" />
+      </span>
+
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">
+          {current?.title ?? "No track selected"}
+        </span>
+        <span className="block truncate text-xs text-muted-foreground">
           {current ? `${current.artist}${current.anime ? " • " + current.anime : ""}` : "Pick a song to start"}
-        </div>
-      </div>
+        </span>
+      </span>
     </button>
+
 
     {/* Center: transport + progress */}
     <div className="flex flex-1 flex-col items-center gap-2">
